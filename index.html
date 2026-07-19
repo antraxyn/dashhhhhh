@@ -91,7 +91,11 @@
                 </div>
                 <div class="flex flex-wrap gap-2 w-full xl:w-auto items-center justify-start xl:justify-end">
                     
-                    <!-- Tombol Edit Massal -->
+                    <!-- FITUR BARU: TOMBOL SINKRONISASI TIDB -> GITHUB -->
+                    <button id="btnSync" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md transition flex items-center justify-center gap-2" onclick="syncDatabaseToGitHub()">
+                        <i class="fa-solid fa-rotate"></i> Sinkronkan dari TiDB
+                    </button>
+
                     <button id="btnBulkEdit" class="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-md transition flex items-center justify-center gap-2 hidden" onclick="openBulkEditModal()">
                         <i class="fa-solid fa-pen-to-square"></i> Edit Massal (<span id="bulkCount">0</span>)
                     </button>
@@ -147,7 +151,7 @@
                     </table>
                 </div>
 
-                <!-- Paginasi (Bawah Tabel) -->
+                <!-- Paginasi -->
                 <div class="p-4 border-t border-gray-100 bg-slate-50 flex justify-between items-center text-xs text-slate-500 flex-wrap gap-3">
                     <span id="totalProductCounter" class="font-bold">Total: 0 Produk</span>
                     
@@ -182,7 +186,6 @@
             </div>
 
             <div id="bulkEditContainer" class="custom-scrollbar" style="overflow-y: auto; flex-grow: 1; padding-right: 5px; margin-bottom: 15px;">
-                <!-- Baris edit massal dirender di sini -->
             </div>
             
             <button class="neu-btn bg-amber-500 hover:bg-amber-600 text-white w-full mt-2 shadow-md" id="btnSaveBulkEdit" onclick="saveBulkEdit()">
@@ -268,15 +271,12 @@
 
     <script>
         // ==========================================
-        // PENGATURAN URL PENTING
+        // PENGATURAN URL
         // ==========================================
-        
-        // 1. URL PENYIMPANAN DATA (WRITE) - Mengarah ke Backend Rust Anda
         const ADMIN_API_URL = "https://guleleng.onrender.com/api/admin"; 
         
-        // 2. URL PEMBACAAN DATA (READ) - Mengarah ke GitHub tempat katalog.json berada
-        // GANTI BAGIAN "antraxyn/NAMA_REPO_ANDA" DENGAN USERNAME DAN REPO ANDA YANG BENAR!
-        const GITHUB_CATALOG_URL = "https://raw.githubusercontent.com/antraxyn/dashhhhhh/main/katalog.json";
+        // GANTI BAGIAN "antraxyn/NAMA_REPO_ANDA" DENGAN USERNAME DAN REPO ANDA!
+        const GITHUB_CATALOG_URL = "https://raw.githubusercontent.com/antraxyn/NAMA_REPO_ANDA/main/katalog.json";
         
         let globalProducts = [];
         let filteredProducts = [];
@@ -362,6 +362,41 @@
             notifMessage.textContent = String(message);
             notifBtn.onclick = function() { notifModal.classList.remove('active'); };
             notifModal.classList.add('active');
+        }
+
+        // ==========================================
+        // FITUR BARU: SINKRONISASI MANUAL (TARIK DATA)
+        // ==========================================
+        async function syncDatabaseToGitHub() {
+            if(!confirm("Anda yakin ingin menarik seluruh data dari TiDB ke GitHub?\n\nJika ini pertama kali, proses ini sangat aman untuk mengisi katalog yang masih kosong.")) return;
+
+            const btn = document.getElementById('btnSync');
+            const originalHTML = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Menyinkronkan...';
+            btn.disabled = true;
+
+            try {
+                const response = await fetch(`${ADMIN_API_URL}/sync`, {
+                    method: 'POST',
+                    headers: getHeaders()
+                });
+
+                if (response.ok) {
+                    showNotification("Sinkronisasi Sukses!", "Data TiDB telah disalin ke GitHub. Memuat ulang data...", "success");
+                    // Tunggu sedikit agar cache raw GitHub berubah, lalu load ulang tabel
+                    setTimeout(() => {
+                        loadProducts(true);
+                    }, 2500);
+                } else {
+                    const errText = await response.text();
+                    throw new Error(errText);
+                }
+            } catch (error) {
+                showNotification("Gagal Sinkronisasi", error.message, "error");
+            } finally {
+                btn.innerHTML = originalHTML;
+                btn.disabled = false;
+            }
         }
 
         // ==========================================
@@ -482,7 +517,6 @@
         // ==========================================
         async function loadProducts(keepPage = false) {
             try {
-                // Gunakan query param timestamp agar browser selalu mengambil JSON terbaru (bukan versi cache)
                 const cacheBuster = new Date().getTime();
                 const res = await fetch(`${GITHUB_CATALOG_URL}?v=${cacheBuster}`);
                 
@@ -500,7 +534,7 @@
 
                 window.applyFilterAndSort(keepPage);
             } catch (err) {
-                showNotification("Gagal Membaca Katalog", "Pastikan URL GitHub Anda benar dan file JSON memiliki akses publik (raw).", "error");
+                showNotification("Perhatian", "Katalog GitHub kosong atau tidak bisa diakses. Silakan klik tombol 'Sinkronkan dari TiDB' di pojok kanan atas.", "warning");
                 console.error(err);
             }
         }
@@ -563,7 +597,7 @@
         }
 
         // ==========================================
-        // 5. FITUR EDIT MASSAL (SEQUENTIAL / MENGANTRE)
+        // 5. FITUR EDIT MASSAL
         // ==========================================
         Object.defineProperty(window, 'toggleRow', {
             value: function(id, isChecked) {
@@ -647,8 +681,6 @@
 
                 let successCount = 0; let failCount = 0;
 
-                // For..of loop digunakan agar request dikirim secara berurutan (Queue)
-                // Ini mencegah GitHub menolak perubahan karena konflik file_sha
                 let currentItem = 1;
                 for (const item of items) {
                     btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Menyimpan Produk ${currentItem} dari ${items.length} ke GitHub & TiDB...`;
@@ -673,7 +705,6 @@
                         
                         if (!response.ok) throw new Error("Gagal");
                         
-                        // IN-MEMORY UPDATE: Timpa data array secara lokal
                         prod.price = payload.price;
                         prod.kategori = payload.kategori;
                         prod.is_active = payload.is_active;
@@ -693,7 +724,6 @@
                 selectedIds.clear(); updateBulkButton();
                 document.getElementById('selectAllCb').checked = false;
                 
-                // Render ulang tabel dengan data baru tanpa menarik ulang dari GitHub (karena file GitHub butuh waktu untuk clear cache)
                 window.applyFilterAndSort(true); 
             }, writable: false, configurable: false
         });
@@ -787,7 +817,6 @@
                     closeEditModal();
                     showNotification("Berhasil", "Data sukses diperbarui secara sinkron di GitHub dan TiDB!", "success");
                     
-                    // IN-MEMORY UPDATE
                     const updatedProdIndex = globalProducts.findIndex(p => String(p.id) === String(id));
                     if (updatedProdIndex !== -1) {
                         globalProducts[updatedProdIndex].name = payload.name;
