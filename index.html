@@ -87,7 +87,7 @@
             <div class="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-8 gap-4">
                 <div>
                     <h1 class="text-2xl font-bold text-slate-800">Manajemen Katalog</h1>
-                    <p class="text-sm text-slate-500 mt-1">Kelola data E-Book, harga, dan informasi produk.</p>
+                    <p class="text-sm text-slate-500 mt-1">Kelola data E-Book dari GitHub, tersimpan ke TiDB.</p>
                 </div>
                 <div class="flex flex-wrap gap-2 w-full xl:w-auto items-center justify-start xl:justify-end">
                     
@@ -163,7 +163,7 @@
                         <button onclick="window.nextPage()" id="btnNextPage" class="w-8 h-8 flex items-center justify-center bg-white border border-gray-200 rounded hover:bg-slate-50 disabled:opacity-30 disabled:cursor-not-allowed transition text-slate-600"><i class="fas fa-chevron-right"></i></button>
                     </div>
 
-                    <span class="flex items-center gap-2 hidden md:flex"><i class="fa-solid fa-shield-halved text-green-500"></i> Database TiDB</span>
+                    <span class="flex items-center gap-2 hidden md:flex"><i class="fa-solid fa-code-branch text-green-500"></i> Data Source: GitHub JSON</span>
                 </div>
             </div>
         </section>
@@ -267,7 +267,16 @@
     </div>
 
     <script>
+        // ==========================================
+        // PENGATURAN URL PENTING
+        // ==========================================
+        
+        // 1. URL PENYIMPANAN DATA (WRITE) - Mengarah ke Backend Rust Anda
         const ADMIN_API_URL = "https://guleleng.onrender.com/api/admin"; 
+        
+        // 2. URL PEMBACAAN DATA (READ) - Mengarah ke GitHub tempat katalog.json berada
+        // GANTI BAGIAN "antraxyn/NAMA_REPO_ANDA" DENGAN USERNAME DAN REPO ANDA YANG BENAR!
+        const GITHUB_CATALOG_URL = "https://raw.githubusercontent.com/antraxyn/NAMA_REPO_ANDA/main/katalog.json";
         
         let globalProducts = [];
         let filteredProducts = [];
@@ -403,7 +412,7 @@
             value: function(keepPage = false) {
                 const query = document.getElementById('searchInput').value.toLowerCase();
                 filteredProducts = globalProducts.filter(p => {
-                    return (p.name || '').toLowerCase().includes(query) || 
+                    return (p.name || p.title || '').toLowerCase().includes(query) || 
                            (p.kategori || '').toLowerCase().includes(query) ||
                            String(p.id).toLowerCase().includes(query);
                 });
@@ -411,7 +420,8 @@
                 filteredProducts.sort((a, b) => {
                     let valA = a[sortCol]; let valB = b[sortCol];
                     if (sortCol === 'name') { 
-                        valA = (a.name || '').toLowerCase(); valB = (b.name || '').toLowerCase(); 
+                        valA = (a.name || a.title || '').toLowerCase(); 
+                        valB = (b.name || b.title || '').toLowerCase(); 
                     } else { 
                         valA = Number(valA) || 0; valB = Number(valB) || 0; 
                     }
@@ -468,23 +478,30 @@
         }
 
         // ==========================================
-        // 4. FETCH DATA & RENDER TABEL
+        // 4. FETCH DATA (DARI GITHUB) & RENDER TABEL
         // ==========================================
         async function loadProducts(keepPage = false) {
             try {
-                const res = await fetch(`${ADMIN_API_URL}/products`, { headers: getHeaders() });
+                // Gunakan query param timestamp agar browser selalu mengambil JSON terbaru (bukan versi cache)
+                const cacheBuster = new Date().getTime();
+                const res = await fetch(`${GITHUB_CATALOG_URL}?v=${cacheBuster}`);
                 
-                if (res.status === 401) {
-                    showNotification("Otorisasi Gagal", "Sesi ditolak.", "error");
-                    logoutAdmin();
-                    return;
-                }
-                if (!res.ok) throw new Error("Gagal mengambil data dari server");
+                if (!res.ok) throw new Error(`Gagal mengambil data dari GitHub: ${res.status}`);
 
-                globalProducts = await res.json();
+                const data = await res.json();
+                
+                if (Array.isArray(data)) {
+                    globalProducts = data;
+                } else if (data && data.products) {
+                    globalProducts = data.products;
+                } else {
+                    throw new Error("Format JSON tidak dikenali");
+                }
+
                 window.applyFilterAndSort(keepPage);
             } catch (err) {
-                showNotification("Koneksi Terputus", "Server Admin Render tidak dapat dihubungi.", "error");
+                showNotification("Gagal Membaca Katalog", "Pastikan URL GitHub Anda benar dan file JSON memiliki akses publik (raw).", "error");
+                console.error(err);
             }
         }
 
@@ -530,11 +547,11 @@
                             <img src="${safeImgUrl}" class="w-12 h-16 rounded-lg object-cover border border-gray-200">
                         </td>
                         <td class="p-4">
-                            <p class="font-bold text-slate-800 line-clamp-1">${p.name}</p>
+                            <p class="font-bold text-slate-800 line-clamp-1">${p.name || p.title || 'Tanpa Judul'}</p>
                             <p class="text-[10px] text-slate-400 font-mono">ID: ${p.id}</p>
                         </td>
                         <td class="p-4 font-semibold text-slate-600">${formatRupiah(p.price)}</td>
-                        <td class="p-4 text-xs font-semibold text-slate-500">${p.kategori}</td>
+                        <td class="p-4 text-xs font-semibold text-slate-500">${p.kategori || 'Tanpa Kategori'}</td>
                         <td class="p-4 text-center">${statusBadge}</td>
                         <td class="p-4 text-center">
                             <button onclick="triggerEdit('${p.id}')" class="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white transition shadow-sm border border-blue-100" title="Edit Detail">
@@ -546,7 +563,7 @@
         }
 
         // ==========================================
-        // 5. FITUR EDIT MASSAL
+        // 5. FITUR EDIT MASSAL (SEQUENTIAL / MENGANTRE)
         // ==========================================
         Object.defineProperty(window, 'toggleRow', {
             value: function(id, isChecked) {
@@ -588,7 +605,7 @@
                         div.dataset.id = prod.id;
                         div.innerHTML = `
                             <div class="font-bold text-slate-700 mb-3 border-b border-gray-100 pb-2 flex justify-between items-center">
-                                <span class="truncate flex-1 text-sm"><i class="fas fa-book text-blue-500 mr-2"></i>${prod.name}</span>
+                                <span class="truncate flex-1 text-sm"><i class="fas fa-book text-blue-500 mr-2"></i>${prod.name || prod.title}</span>
                                 <span class="text-[10px] text-slate-400 font-mono ml-2 bg-slate-100 px-2 py-1 rounded">ID: ${prod.id}</span>
                             </div>
                             <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -598,7 +615,7 @@
                                 </div>
                                 <div>
                                     <label class="text-[10px] font-bold text-slate-500 uppercase">Kategori</label>
-                                    <input type="text" class="neu-input w-full p-2 text-xs bulk-category" value="${prod.kategori}">
+                                    <input type="text" class="neu-input w-full p-2 text-xs bulk-category" value="${prod.kategori || ''}">
                                 </div>
                                 <div>
                                     <label class="text-[10px] font-bold text-slate-500 uppercase">Status Visibilitas</label>
@@ -625,17 +642,22 @@
                 const items = document.querySelectorAll('.bulk-item');
                 const btn = document.getElementById('btnSaveBulkEdit');
                 const originalText = btn.innerHTML;
-                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Memproses ke Server...';
+                
                 btn.disabled = true;
 
                 let successCount = 0; let failCount = 0;
 
-                const promises = Array.from(items).map(async (item) => {
+                // For..of loop digunakan agar request dikirim secara berurutan (Queue)
+                // Ini mencegah GitHub menolak perubahan karena konflik file_sha
+                let currentItem = 1;
+                for (const item of items) {
+                    btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Menyimpan Produk ${currentItem} dari ${items.length} ke GitHub & TiDB...`;
+                    
                     const id = item.dataset.id;
                     const prod = globalProducts.find(p => String(p.id) === id);
                     
                     const payload = {
-                        name: prod.name, // Jangan ubah nama
+                        name: prod.name || prod.title,
                         price: Number(item.querySelector('.bulk-price').value),
                         kategori: item.querySelector('.bulk-category').value,
                         is_active: Number(item.querySelector('.bulk-status').value),
@@ -648,24 +670,31 @@
                             method: 'PUT', headers: getHeaders(),
                             body: JSON.stringify(payload)
                         });
+                        
                         if (!response.ok) throw new Error("Gagal");
+                        
+                        // IN-MEMORY UPDATE: Timpa data array secara lokal
+                        prod.price = payload.price;
+                        prod.kategori = payload.kategori;
+                        prod.is_active = payload.is_active;
+
                         successCount++;
                     } catch (e) { failCount++; }
-                });
-
-                await Promise.all(promises);
+                    
+                    currentItem++;
+                }
 
                 btn.innerHTML = originalText; btn.disabled = false;
                 window.closeBulkEditModal();
                 
-                if (failCount === 0) showNotification("Selesai", `${successCount} produk diperbarui secara massal!`, "success");
+                if (failCount === 0) showNotification("Selesai", `${successCount} produk sukses ditulis ke GitHub & TiDB!`, "success");
                 else showNotification("Peringatan", `${successCount} sukses, ${failCount} gagal diperbarui.`, "warning");
                 
                 selectedIds.clear(); updateBulkButton();
                 document.getElementById('selectAllCb').checked = false;
                 
-                // Muat ulang data tanpa mereset ke halaman 1
-                loadProducts(true); 
+                // Render ulang tabel dengan data baru tanpa menarik ulang dari GitHub (karena file GitHub butuh waktu untuk clear cache)
+                window.applyFilterAndSort(true); 
             }, writable: false, configurable: false
         });
 
@@ -678,7 +707,7 @@
                 if(!p) return;
                 
                 document.getElementById('editProdId').value = p.id;
-                document.getElementById('editProdName').value = p.name;
+                document.getElementById('editProdName').value = p.name || p.title;
                 document.getElementById('editProdPrice').value = p.price;
                 document.getElementById('editProdCategory').value = p.kategori;
                 document.getElementById('editProdStatus').value = p.is_active;
@@ -737,7 +766,7 @@
                 }
             }
 
-            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Menyimpan...';
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i> Menyimpan ke GitHub & TiDB...';
             
             const payload = {
                 name: document.getElementById('editProdName').value,
@@ -756,14 +785,27 @@
 
                 if(res.ok) {
                     closeEditModal();
-                    showNotification("Berhasil", "Data produk berhasil diperbarui.", "success");
-                    // Muat ulang data tanpa mereset ke halaman 1
-                    loadProducts(true); 
+                    showNotification("Berhasil", "Data sukses diperbarui secara sinkron di GitHub dan TiDB!", "success");
+                    
+                    // IN-MEMORY UPDATE
+                    const updatedProdIndex = globalProducts.findIndex(p => String(p.id) === String(id));
+                    if (updatedProdIndex !== -1) {
+                        globalProducts[updatedProdIndex].name = payload.name;
+                        globalProducts[updatedProdIndex].price = payload.price;
+                        globalProducts[updatedProdIndex].kategori = payload.kategori;
+                        globalProducts[updatedProdIndex].is_active = payload.is_active;
+                        globalProducts[updatedProdIndex].deskripsi = payload.deskripsi;
+                        globalProducts[updatedProdIndex].cover_url = payload.cover_url;
+                    }
+                    
+                    window.applyFilterAndSort(true); 
+
                 } else {
-                    throw new Error("Gagal memperbarui di server.");
+                    const errTxt = await res.text();
+                    throw new Error(errTxt);
                 }
             } catch (err) {
-                showNotification("Gagal Disimpan", "Kesalahan jaringan saat menyimpan ke TiDB.", "error");
+                showNotification("Gagal Disimpan", "Kesalahan saat menyimpan: " + err.message, "error");
             } finally {
                 btn.innerHTML = '<i class="fa-solid fa-save"></i> Simpan Seluruh Perubahan';
                 btn.disabled = false;
